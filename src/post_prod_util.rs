@@ -1,0 +1,2 @@
+Most of the contents of this file were abandoned due to time crunch, but the working features are branched out into sibling-files, notabely the proxies.rs and utils.rs and the contents/features used to write the README.md; Incredibely Sorry to the HC team incase you're reviewing this, I tried to not delete this file as to make sure there was no misunderstanding, feel free to mail me incase you want to crosscheck the eact work I did in this file.
+- Hursh <3

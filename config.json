@@ -1,0 +1,51 @@
+{
+    "host": [[127, 0, 0, 1], 3000],
+
+    "redis_server": 3005,
+    "compression": true,
+    "max_cache_mem": "100000000000mb",
+    "cache_eviction_policy": "allkeys-lru",
+    "redis_config_init": "/tmp/lb/redis_lb.conf",
+
+    "health_check": 5,
+    "health_check_path": "/",
+
+    "min_ua_len":0,
+    "blocked_uas": [],
+
+    "dos_sus_threshhold": 12,
+
+    "ddos_cap": 150,
+    "ddos_grace_factor": 8,
+    "dtp": 0.99,
+
+    "ban_timeout": 300,
+
+    "Method_hash_check": true,
+    "Check_in": false,
+    "Check_out": true,
+
+    "js_challenge": false,
+    "challenge_url": "/js-challenge",
+
+    "dynamic": false,
+    "server_spinup_rt_gf": 2, 
+    "max_port": 6000,
+    "bin_path": "./intrasudo25",
+
+    "ipc": true,
+    "ipc_path": "/tmp/test/",
+
+    "max_concurrent_reqs_ps": 160,
+    "timeout_dur": 10,
+
+    "servers": [
+        {
+            "ip": "/tmp/intrasudo25.sock",
+            "is_active": true,
+            "strict_timeout": false
+        } 
+    ]
+
+}
+
