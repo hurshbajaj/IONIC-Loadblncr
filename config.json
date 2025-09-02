@@ -33,7 +33,7 @@
     "max_port": 6000,
     "bin_path": "./intrasudo25",
 
-    "ipc": true,
+    "ipc": false,
     "ipc_path": "/tmp/test/",
 
     "max_concurrent_reqs_ps": 160,
@@ -41,7 +41,7 @@
 
     "servers": [
         {
-            "ip": "/tmp/intrasudo25.sock",
+            "ip": "http://localhost:8080/",
             "is_active": true,
             "strict_timeout": false
         } 

@@ -179,7 +179,6 @@ async fn main() {
 
         async move {
             Ok::<_, anyhow::Error>(service_fn(move |req| {
-                log("Req Recv.");
                 let client = client.clone();
                 let remote = remote_addr.clone();
 
@@ -192,11 +191,9 @@ async fn main() {
                         Ok(response) => {
                             let duration = st.elapsed();
                             CLIclient::rt_avg_c.write().await.push(duration.as_millis() as u64);
-                            log("Req Compl.");
                             Ok::<_, anyhow::Error>(response)
                         },
                         Err(err) => {
-                            log("Req Compl.");
                             Ok(Response::builder()
                                 .status(hyper::StatusCode::BAD_GATEWAY)
                                 .body(hyper::Body::from(err.to_string()))

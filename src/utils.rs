@@ -138,7 +138,7 @@ pub fn decompress_bytes(data: &mut [u8]) -> Result<String, anyhow::Error> {
     Ok(decoded)
 }
 
-pub async fn build_cache_key(mut req: Request<Body>) -> Result<Vec<u8>, anyhow::Error> {
+pub async fn build_cache_key(mut req: Request<Body>, compress: bool) -> Result<Vec<u8>, anyhow::Error> {
     dotenv::dotenv().ok();
 
     let method = req.method().clone();
@@ -153,10 +153,6 @@ pub async fn build_cache_key(mut req: Request<Body>) -> Result<Vec<u8>, anyhow::
         uri,
         String::from_utf8_lossy(&whole_body)
     );
-
-    let compress = {
-        CONFIG.lock().await.compression
-    };
 
     if !compress{
         return Ok(composite.into_bytes())

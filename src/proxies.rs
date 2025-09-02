@@ -10,7 +10,7 @@ use hyperlocal::Uri as local_uri;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-use crate::structs::{client_type, ErrorTypes, Server};
+use crate::structs::{client_type, Config, ErrorTypes, Server};
 use crate::{timeline::{self, *}, CLIclient::{self, *}};
 use crate::utils::{self, *};
 
@@ -22,8 +22,9 @@ pub async fn proxy(
     origin_ip: String,
     timeout_dur: u64,
     redis_conn: Arc<Mutex<redis::aio::Connection>>,
-    dos_threshhold: u64,
+    _dos_threshhold: u64,
 ) -> Result<Response<Body>, anyhow::Error> {
+    let mut config_lock_mutex = CONFIG.lock().await;
 
     CLIclient::total.fetch_add(1, Ordering::SeqCst);
 
@@ -33,9 +34,6 @@ pub async fn proxy(
         return Err(anyhow::Error::msg(format_error_type(ErrorTypes::DDoSsus)))
     }
 
-    //no hangup
-    //current concurrent fix
-    
     let mut check_o = false;
     
     let user_agent = req.headers()
@@ -50,36 +48,32 @@ pub async fn proxy(
 
     let methd = req.method();
 
-    let (min_ua_len, blocked_uas) = {
-        let g = CONFIG.lock().await;
-        (g.min_ua_len.clone(), g.blocked_uas.clone())
-    };
+    let (min_ua_len, blocked_uas) = (config_lock_mutex.min_ua_len.clone(), config_lock_mutex.blocked_uas.clone());
    if user_agent.len() < min_ua_len as usize || blocked_uas.contains(&(user_agent.to_string())) {
         return Err(anyhow::Error::msg(format_error_type(ErrorTypes::InvalidUserAgent)));
     }
+
     {
 
-        let config_g = CONFIG.lock().await;
-
-        if req.uri().path() == config_g.challenge_url && config_g.js_challenge{
+        if req.uri().path() == config_lock_mutex.challenge_url && config_lock_mutex.js_challenge{
             match serve_js_challenge("/").await {
                 Ok(x) => return Ok(x),
                 Err(x) => return Err(anyhow::Error::msg(format_error_type(ErrorTypes::Load_balance_Verification_Fail)))
             }
         }
 
-        if config_g.Method_hash_check{
-            if config_g.Check_in {
+        if config_lock_mutex.Method_hash_check{
+            if config_lock_mutex.Check_in {
                 if !verify_hmac_from_env(methd.to_string().as_str(), Hmac) {
                     return Err(anyhow::Error::msg(format_error_type(ErrorTypes::Suspiscious)));
                 }
             }
-            if config_g.Check_out {
+            if config_lock_mutex.Check_out {
                 check_o = true;
             }
         }
-        if !has_js_challenge_cookie(&req) && config_g.js_challenge{
-            let redirect_url = format!("{}", config_g.challenge_url);
+        if !has_js_challenge_cookie(&req) && config_lock_mutex.js_challenge{
+            let redirect_url = format!("{}", config_lock_mutex.challenge_url);
             return Ok(Response::builder()
                 .status(302)
                 .header(LOCATION, redirect_url)
@@ -97,13 +91,13 @@ pub async fn proxy(
     let mut cache_req: Request<Body>;
     (cache_req, req) = clone_request(req).await.unwrap();
 
-    let cache_key = build_cache_key(cache_req).await.unwrap();
+    let cache_key = build_cache_key(cache_req, config_lock_mutex.compression).await.unwrap();
     
     {
         let mut redis = redis_conn.lock().await;
         match redis.get::<_, Option<Vec<u8>>>(&cache_key).await {
             Ok(Some(mut cached_value)) => {
-                if CONFIG.lock().await.compression{
+                if config_lock_mutex.compression{
                     let decompressed = decompress_bytes(&mut cached_value)?;
                     return Ok(Response::new(Body::from(decompressed)))
                 }else{
@@ -119,7 +113,7 @@ pub async fn proxy(
         let req_clone: Request<Body>;
         (req_clone, req) = clone_request(req).await.unwrap();
 
-        if let Err(err) = updateTARGET().await {
+        if let Err(err) = updateTARGET(config_lock_mutex.clone()).await {
             return Err(err)
         }
 
@@ -129,11 +123,7 @@ pub async fn proxy(
 
         let mut proxied_req = Request::builder();
 
-        let (ipc, path) = {
-            let g = CONFIG.lock().await;
-            (g.ipc.clone(), g.ipc_path.clone())
-        };
-
+        let (ipc, path) = (config_lock_mutex.ipc.clone(), config_lock_mutex.ipc_path.clone());
         if ipc{
             let urii: hyper::Uri = local_uri::new(target.ip.clone(), req_clone.uri().path_and_query().map(|x| x.as_str()).unwrap_or("/")).into();
             proxied_req = Request::builder()
@@ -173,10 +163,7 @@ pub async fn proxy(
 
         let mut timeout_result;
 
-        let max_concurrent = {
-            let g = CONFIG.lock().await;
-            g.max_concurrent_reqs_ps
-        };
+        let max_concurrent = config_lock_mutex.max_concurrent_reqs_ps;
         if target.concurrent.load(Ordering::SeqCst) >= max_concurrent{continue;}
         target.concurrent.fetch_add(1, Ordering::SeqCst);
         count += 1;
@@ -202,15 +189,14 @@ pub async fn proxy(
                     target.res_time = ((start.elapsed().as_millis() as u64) + target.res_time) / 2 as u64;
                     
                     if count > 0{
-                        let mut cg = CONFIG.lock().await;
-                        let ci = find_index::<Server>(&cg.servers, &target).await.unwrap();
+                        let ci = find_index::<Server>(&config_lock_mutex.servers, &target).await.unwrap();
                         let cn;
                         if ci - 1 < 0{
-                            cn = cg.servers.len() - 1;
+                            cn = config_lock_mutex.servers.len() - 1;
                         } else{
                             cn = ci-1;
                         }
-                        cg.servers[cn].lock().await.is_active == false;
+                        config_lock_mutex.servers[cn].lock().await.is_active == false;
                     }
 
                     // cache
@@ -229,9 +215,7 @@ pub async fn proxy(
 
                                     let mut redis = redis_conn.lock().await;
 
-                                    let compression_enable = {
-                                        CONFIG.lock().await.compression  
-                                    };
+                                    let compression_enable = config_lock_mutex.compression; 
                                     if compression_enable{
                                        redis.set_ex::<_, _, ()>(&cache_key, compressed, max_age_secs as u64).await.unwrap_or_else(|_|{});
                                     }else{
@@ -281,6 +265,7 @@ pub async fn proxy(
             }
         }
     };
+
 }
 
 async fn find_index<T>(vec: &[Arc<Mutex<T>>], target: &T) -> Option<usize>
@@ -405,9 +390,8 @@ async fn clone_request(req: Request<Body>) -> Result<(Request<Body>, Request<Bod
 
     Ok((req1, req2))
 } 
-async fn updateTARGET() -> anyhow::Result<()> {
+async fn updateTARGET(config: Config) -> anyhow::Result<()> {
     let (servers, mut at_idx) = {
-        let config = CONFIG.lock().await;
         let mut at_server_idx = atServerIdx.lock().await;
 
         if proc_shutdown.lock().await.clone() {
