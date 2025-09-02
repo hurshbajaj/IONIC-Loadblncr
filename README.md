@@ -144,7 +144,7 @@ The first field asks for a minimum user agent length... if the request UA is sma
 "dtp": 0.99,
 "ban_timeout": 300,
 ```
-Now this is where things start getting epic. The first field asks for a threshold, an rps PER ip after which the loadbalancer blocks it for #ban_timeout seconds. However don't worry too much about it as this check isn't triggered every second, the loadbalncer only goes through each IP once things start getting suspiscious, that is, when there is a sudden spike in traffic. This is detected via the sliding quantile system in place. Feel free to google the terminology for its a fairly simply concept, or personally mail me your query if any as I'll be happy to explain it to you, but to operate this mechanism, you already know what [dos_sus_threshhold] does... Just read the following for the rest~
+Now this is where things start getting epic. The first field asks for a threshold, an rps PER ip after which the loadbalancer blocks it for #ban_timeout seconds. However don't worry too much about it as this check isn't triggered every second, the loadbalncer only goes through each IP once things start getting suspiscious, that is, when there is a sudden spike in traffic. This is detected via the sliding quantile system in place. Feel free to google the terminology for its a fairly simple concept, or personally mail me your query if any as I'll be happy to explain it to you, but to operate this mechanism, you already know what [dos_sus_threshhold] does... Just read the following for the rest~
 
 > **DDOS CAP**  
 
