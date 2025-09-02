@@ -36,7 +36,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 Add it to your path if you need to. Now to clone this repo
 ```bash
-git clone <link>
+git clone https://github.com/hurshbajaj/IONIC-Loadblncr
 ```
 Next add the following Rust-Flag to your environment variable for the loadbalancer to function neatly
 
