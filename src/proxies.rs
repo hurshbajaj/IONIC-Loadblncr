@@ -14,14 +14,15 @@ use crate::structs::{client_type, Config, ErrorTypes, Server};
 use crate::{timeline::{self, *}, CLIclient::{self, *}};
 use crate::utils::{self, *};
 
-use redis::AsyncCommands;
+use deadpool_redis::Pool;
+use deadpool_redis::redis::AsyncCommands;
 
 pub async fn proxy(
     mut req: Request<Body>,
     client: client_type,
     origin_ip: String,
     timeout_dur: u64,
-    redis_conn: Arc<Mutex<redis::aio::Connection>>,
+    redis_pool: Pool,
     _dos_threshhold: u64,
 ) -> Result<Response<Body>, anyhow::Error> {
     let mut config_lock_mutex = CONFIG.lock().await;
@@ -30,7 +31,7 @@ pub async fn proxy(
 
     dos(origin_ip.clone());
 
-   if ban_list.read().await.contains(&origin_ip.clone()){
+    if ban_list.read().await.contains(&origin_ip.clone()){
         return Err(anyhow::Error::msg(format_error_type(ErrorTypes::DDoSsus)))
     }
 
@@ -49,16 +50,15 @@ pub async fn proxy(
     let methd = req.method();
 
     let (min_ua_len, blocked_uas) = (config_lock_mutex.min_ua_len.clone(), config_lock_mutex.blocked_uas.clone());
-   if user_agent.len() < min_ua_len as usize || blocked_uas.contains(&(user_agent.to_string())) {
+    if user_agent.len() < min_ua_len as usize || blocked_uas.contains(&(user_agent.to_string())) {
         return Err(anyhow::Error::msg(format_error_type(ErrorTypes::InvalidUserAgent)));
     }
 
     {
-
         if req.uri().path() == config_lock_mutex.challenge_url && config_lock_mutex.js_challenge{
             match serve_js_challenge("/").await {
                 Ok(x) => return Ok(x),
-                Err(x) => return Err(anyhow::Error::msg(format_error_type(ErrorTypes::Load_balance_Verification_Fail)))
+                Err(_) => return Err(anyhow::Error::msg(format_error_type(ErrorTypes::Load_balance_Verification_Fail)))
             }
         }
 
@@ -94,8 +94,8 @@ pub async fn proxy(
     let cache_key = build_cache_key(cache_req, config_lock_mutex.compression).await.unwrap();
     
     {
-        let mut redis = redis_conn.lock().await;
-        match redis.get::<_, Option<Vec<u8>>>(&cache_key).await {
+        let mut conn = redis_pool.get().await?;
+        match conn.get::<_, Option<Vec<u8>>>(&cache_key).await {
             Ok(Some(mut cached_value)) => {
                 if config_lock_mutex.compression{
                     let decompressed = decompress_bytes(&mut cached_value)?;
@@ -213,13 +213,12 @@ pub async fn proxy(
 
                                     let compressed = compress_str(&body_string)?;
 
-                                    let mut redis = redis_conn.lock().await;
-
+                                    let mut conn = redis_pool.get().await?;
                                     let compression_enable = config_lock_mutex.compression; 
                                     if compression_enable{
-                                       redis.set_ex::<_, _, ()>(&cache_key, compressed, max_age_secs as u64).await.unwrap_or_else(|_|{});
+                                        let _ = conn.set_ex::<_, _, ()>(&cache_key, compressed, max_age_secs as u64).await;
                                     }else{
-                                       redis.set_ex::<_, _, ()>(&cache_key, body_string.clone(), max_age_secs as u64).await.unwrap_or_else(|_|{});
+                                        let _ = conn.set_ex::<_, _, ()>(&cache_key, body_string.clone(), max_age_secs as u64).await;
                                     }
 
                                     let mut new_response = Response::builder()
@@ -242,7 +241,6 @@ pub async fn proxy(
 
                     return Ok(response)
                 }
-                // this can be intended by the server, don't mark as non-active
                 Err(_) => {
                     if count >= 1 {
                         CLIclient::total_bad.fetch_add(1, Ordering::SeqCst);
@@ -265,7 +263,6 @@ pub async fn proxy(
             }
         }
     };
-
 }
 
 async fn find_index<T>(vec: &[Arc<Mutex<T>>], target: &T) -> Option<usize>
@@ -353,7 +350,6 @@ fn dos(ip: String){
     let mut entry = RATE_LIMITS.entry(ip.clone()).or_insert_with(|| AtomicU32::new(0));
 
     entry.fetch_add(1, Ordering::SeqCst);
-
 }
 
 async fn clone_request(req: Request<Body>) -> Result<(Request<Body>, Request<Body>), hyper::Error> {
@@ -390,6 +386,7 @@ async fn clone_request(req: Request<Body>) -> Result<(Request<Body>, Request<Bod
 
     Ok((req1, req2))
 } 
+
 async fn updateTARGET(config: Config) -> anyhow::Result<()> {
     let (servers, mut at_idx) = {
         let mut at_server_idx = atServerIdx.lock().await;
@@ -437,3 +434,4 @@ async fn updateTARGET(config: Config) -> anyhow::Result<()> {
 
     Err(anyhow::anyhow!(format_error_type(ErrorTypes::NoHealthyServerFound)))
 }
+

@@ -33,4 +33,6 @@ url = "2.5.4"
 hyperlocal = "0.8"
 flate2 = "1.1.2"
 console-subscriber = "0.4.1"
+deadpool = "0.12.3"
+deadpool-redis = "0.22.0"
 

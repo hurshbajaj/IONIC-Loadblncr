@@ -4,52 +4,34 @@ mod proxies;
 mod timeline;
 use timeline::*;
 use utils::*;
-use dashmap::DashMap;
-use flate2::{write::{GzDecoder, GzEncoder}, Compression};
-use ratatui::crossterm::event::{self, Event, KeyCode};
-use sha2::{digest::typenum::Max, Digest, Sha256};
-use redis::AsyncCommands;
 use url::Url;
-use std::{f64::MANTISSA_DIGITS, fs::{self, File, OpenOptions}, io::{stderr, Cursor, Read, Write}, iter::from_fn, net::{Ipv4Addr, SocketAddrV4, TcpListener}, os::raw, path::Path, process::{Command, Stdio}, str::FromStr, sync::{atomic::{AtomicU16, AtomicU64}, Arc}, thread::{self, current}, time::{Duration, Instant}};
-use tokio::{io::AsyncReadExt, sync::{Mutex, MutexGuard}, time::{self, timeout}};
+use std::{process::Stdio, sync::{atomic::AtomicU64, Arc}, time::{Duration, Instant}};
+use tokio::{io::AsyncReadExt, sync::Mutex};
 use hyper::{
-    body::to_bytes, client::HttpConnector, header::{HeaderName, HeaderValue}, service::{make_service_fn, service_fn}, Body, Client, Request, Response, Server as HyperServer, Uri
+    service::{make_service_fn, service_fn}, Client, Response, Server as HyperServer
 };
-use anyhow::{self, Context};
-use once_cell::sync::Lazy;
-use serde::{de::Error, Deserialize};
-use serde_json;
-use std::collections::VecDeque;
+use anyhow::{self};
 
-use futures::future::join_all;
-use hyperlocal::{UnixClientExt, UnixConnector, Uri as local_uri};
-
-use std::env;
-use dotenv::dotenv;
-use hmac::{Hmac, Mac};
-use base64::{engine::general_purpose, Engine as _};
-
-use tokio::sync::RwLock;
+use hyperlocal::UnixClientExt;
 
 mod CLIclient;
-use CLIclient::{log};
-use regex::Regex;
+use CLIclient::log;
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::Ordering;
 
 use console_subscriber;
 
+use deadpool_redis::{Config as RedisConfig, Pool};
+
 #[tokio::main]
 async fn main() {
-    console_subscriber::init();
     let clientRun = tokio::spawn(async {
-        CLIclient::establish().await;
+        let _ = CLIclient::establish().await;
     });
     log("Starting Loadbalancer...");
 
-    check_startup().await;
+    let _ = check_startup().await;
 
-    
     use tokio::fs as async_fs;
     use std::path::Path;
     use tokio::io::AsyncWriteExt; 
@@ -90,8 +72,7 @@ async fn main() {
         log("Redis Config Handled");
     }
 
-    let redis = tokio::spawn( async {
-
+    let _redis = tokio::spawn( async {
         use tokio::process::Command as async_Command;
 
         let h = CONFIG.lock().await.redis_config_init.clone();
@@ -117,7 +98,6 @@ async fn main() {
 
         log("Connected to Redis Server...");
         redis_proc.wait().await.expect("Failed to wait on Redis");
-
     });
 
     {
@@ -140,16 +120,12 @@ async fn main() {
         }
     }
 
-    use redis::AsyncCommands;
+    let pool: Pool = {
+        let mut cfg = RedisConfig::from_url(format!("redis://127.0.0.1:{redis_port}/"));
+        cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)).unwrap()
+    };
 
-    let con = loop {
-        let client = redis::Client::open(format!("redis://127.0.0.1:{redis_port}/")).unwrap();
-        if let Ok(c) = client.get_async_connection().await {
-            break Arc::new(Mutex::new(c));
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    };  
-    log("Connected to Redis!");
+    log("Connected to Redis via Pool...");
 
     let ip_mk = [
         config_guard.host.0[0] as u8,
@@ -174,7 +150,7 @@ async fn main() {
         let client = client.clone();
         let timeout_dur = timeout_dur.clone();
 
-        let redis_conn = con.clone();
+        let pool = pool.clone();
         let thresh = dos_thresh.clone();
 
         async move {
@@ -182,12 +158,12 @@ async fn main() {
                 let client = client.clone();
                 let remote = remote_addr.clone();
 
-                let redis_conn = redis_conn.clone();
+                let pool = pool.clone();
                 let thresh = thresh.clone();
 
                 async move {
                     let st = std::time::Instant::now();
-                    match proxy(req, client, remote, timeout_dur.clone(), redis_conn.clone(), thresh.clone()).await {
+                    match proxy(req, client, remote, timeout_dur.clone(), pool.clone(), thresh.clone()).await {
                         Ok(response) => {
                             let duration = st.elapsed();
                             CLIclient::rt_avg_c.write().await.push(duration.as_millis() as u64);
@@ -209,7 +185,7 @@ async fn main() {
 
     let ps = tokio::spawn(async {
         let quant = Arc::new(Mutex::new(SlidingQuantile::new(100)));
-        let mut last_ban_clear = Instant::now(); // keep track of last ban_list clear time
+        let mut last_ban_clear = Instant::now();
 
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
@@ -349,8 +325,6 @@ async fn main() {
         log("Health Checks Running...");
 
         loop {
-            tokio::time::sleep(Duration::from_secs(health_interval)).await;
-
             let mut tasks = vec![];
 
             for server in servers.clone() {
@@ -370,6 +344,7 @@ async fn main() {
             if let Err(e) = reorder().await {
                 eprintln!("Failed to reorder servers after health check: {:?}", e);
             }
+            tokio::time::sleep(Duration::from_secs(health_interval)).await;
         }
     });
 
@@ -384,6 +359,4 @@ use hyper::header::{SET_COOKIE, LOCATION, COOKIE};
 use urlencoding;
 
 use crate::{proxies::{health_check_proxy, proxy}, structs::{client_type, Config, ErrorTypes, IpStruct, RateLimitMap, Server, SlidingQuantile}};
-
-
 
