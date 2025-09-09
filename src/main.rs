@@ -1,4 +1,5 @@
 mod utils;
+
 mod structs;
 mod proxies;
 mod timeline;
@@ -29,7 +30,6 @@ async fn main() {
         let _ = CLIclient::establish().await;
     });
     log("Starting Loadbalancer...");
-
     let _ = check_startup().await;
 
     use tokio::fs as async_fs;
@@ -355,8 +355,5 @@ async fn main() {
     }
 }
 
-use hyper::header::{SET_COOKIE, LOCATION, COOKIE}; 
-use urlencoding;
-
-use crate::{proxies::{health_check_proxy, proxy}, structs::{client_type, Config, ErrorTypes, IpStruct, RateLimitMap, Server, SlidingQuantile}};
+use crate::{proxies::{health_check_proxy, proxy}, structs::{client_type, Server, SlidingQuantile}};
 

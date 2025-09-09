@@ -25,6 +25,7 @@ pub async fn proxy(
     redis_pool: Pool,
     _dos_threshhold: u64,
 ) -> Result<Response<Body>, anyhow::Error> {
+
     let mut config_lock_mutex = CONFIG.lock().await;
 
     CLIclient::total.fetch_add(1, Ordering::SeqCst);
